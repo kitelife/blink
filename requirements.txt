@@ -1,3 +1,4 @@
 psutil
 vincent
 jinja
+pandas

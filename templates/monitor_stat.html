@@ -6,10 +6,29 @@
     <title>服务器监控数据</title>
 </head>
 <body>
+<div id="host_info">
+    <span>服务器基本信息：</span>
+    <ul>
+        <li>IP: {{ host_info.host_ip }}</li>
+        <li>开机时间：{{ host_info.up_time }}</li>
+        <li>CPU核数：{{ host_info.cpu_cores }}</li>
+        <li>内存大小：{{ host_info.mem_total }}</li>
+    </ul>
+</div>
 <div id="cpu_stat"></div>
+    <span>CPU使用率统计图：</span>
     <img src="cid:cpu_stat" />
 <div id="mem_stat">
+    <span>内存使用率统计图：</span>
     <img src="cid:mem_stat" />
+</div>
+<div id="disk_usage">
+    <span>磁盘使用情况：</span>
+    <ul>
+        {% for mount_point, usage in disk_info.iteritems() %}
+            <li>{{ mount_point }}: {{ usage }}%</li>
+        {% endfor %}
+    </ul>
 </div>
 </body>
 </html>

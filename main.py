@@ -15,10 +15,12 @@ from email.utils import COMMASPACE
 from email.header import Header
 from email.mime.image import MIMEImage
 from collections import OrderedDict
-from string import Template
 
 import psutil
 import vincent
+from jinja2 import Template
+from vincent import AxisProperties, PropertySet, ValueRef
+import pandas
 
 
 class DB(object):
@@ -90,9 +92,15 @@ class BeautyEye(object):
             disk_info[dp.mountpoint] = psutil.disk_usage(dp.mountpoint).percent
         return disk_info
 
-    @staticmethod
-    def __host_info():
-        pass
+    def __host_info(self):
+        mem = psutil.virtual_memory()
+        host_info = {
+            'host_ip': self.__config['host_ip'],
+            'up_time': datetime.fromtimestamp(psutil.boot_time()).strftime("%Y-%m-%d %H:%M:%S"),
+            'cpu_cores': psutil.cpu_count(),
+            'mem_total': '{mem_total} MB'.format(mem_total=mem.total / 1024 / 1024)
+        }
+        return host_info
 
     @staticmethod
     def __over_threshold(count, value):
@@ -160,8 +168,7 @@ class BeautyEye(object):
 
             time.sleep(stat_interval)
 
-    @staticmethod
-    def __render_content(template, data):
+    def __render_content(self, template_name, data):
         cmd_pattern = 'vega/bin/vg2png {source_file} {target_file}'
 
         cpu_stat = data['cpu_stat']
@@ -190,9 +197,11 @@ class BeautyEye(object):
             print err
             return False
 
-        with open(template) as fh:
-            template = Template(str(fh.read()))
-        return template.substitute(cpu_graph_path=cpu_graph_file_name, mem_graph_path=mem_graph_file_name)
+        host_info = self.__host_info()
+        disk_info = self.__disk_info()
+        with open(template_name) as fh:
+            template = Template(fh.read().decode('utf-8'))
+        return template.render(host_info=host_info, disk_info=disk_info)
 
     def __email_it(self, subject, content, attach_files):
         msg = MIMEMultipart()
@@ -242,25 +251,31 @@ class BeautyEye(object):
                          % (table_name, now)
                 for row in self.__db.query(for_select):
                     stat_data[table_name]['used_percent'].append(row[0])
-                    stat_data[table_name]['created_at'].append(row[1])
+                    stat_data[table_name]['created_at'].append(datetime.strptime(row[1], '%Y-%m-%d %H:%M:%S'))
                 for_delete = 'DELETE FROM %s WHERE created_at < "%s"' % (table_name, now)
                 self.__db.execute(for_delete)
 
             # cpu
             cpu_stat_data = stat_data['cpu_stat']
-            cpu_graph = vincent.Area(cpu_stat_data['used_percent'])
+            series = pandas.Series(cpu_stat_data['used_percent'], index=cpu_stat_data['created_at'])
+            cpu_graph = vincent.Area(series)
             cpu_graph.axis_titles(x=u'Time', y=u'Usage(%)')
             # cpu_graph.name(u'CPU使用率')
+            ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=30)))
+            cpu_graph.axes[0].properties = ax
             cpu_graph_json = cpu_graph.to_json()
 
             # memory
             mem_stat_data = stat_data['mem_stat']
-            mem_graph = vincent.Area(mem_stat_data['used_percent'])
+            series = pandas.Series(mem_stat_data['used_percent'], index=mem_stat_data['created_at'])
+            mem_graph = vincent.Area(series)
             mem_graph.axis_titles(x=u'Time', y=u'Usage(%)')
             # mem_graph.name(u'内存使用率')
+            ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=30)))
+            mem_graph.axes[0].properties = ax
             mem_graph_json = mem_graph.to_json()
 
-            email_content = self.__render_content(template='templates/monitor_stat.html', data={
+            email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
                                   'cpu_stat': {'data': cpu_graph_json, 'target_file_name': 'cpu_graph.png'},
                                   'mem_stat': {'data': mem_graph_json, 'target_file_name': 'mem_graph.png'}
             })
