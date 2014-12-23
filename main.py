@@ -249,14 +249,14 @@ class BeautyEye(object):
             # cpu
             cpu_stat_data = stat_data['cpu_stat']
             cpu_graph = vincent.Area(cpu_stat_data['used_percent'])
-            cpu_graph.axis_titles(x=u'时间', y=u'使用率(%)')
+            cpu_graph.axis_titles(x=u'Time', y=u'Usage(%)')
             # cpu_graph.name(u'CPU使用率')
             cpu_graph_json = cpu_graph.to_json()
 
             # memory
             mem_stat_data = stat_data['mem_stat']
             mem_graph = vincent.Area(mem_stat_data['used_percent'])
-            mem_graph.axis_titles(x=u'时间', y=u'使用率(%)')
+            mem_graph.axis_titles(x=u'Time', y=u'Usage(%)')
             # mem_graph.name(u'内存使用率')
             mem_graph_json = mem_graph.to_json()
 
@@ -284,28 +284,7 @@ class BeautyEye(object):
 
 
 def main():
-    config = {
-        'cpu': {
-            'interval': 1,
-        },
-        'mem': {
-            'interval': 1,
-        },
-        'disk': {
-            'interval': 10,
-        },
-        'email': {
-            'interval': 10,
-            'server': {
-                'host': '',
-                'port': 465,
-                'username': '',
-                'password': '',
-            },
-            'from': '',
-            'to': [''],
-        }
-    }
+    from conf import config
     be = BeautyEye(config)
     be.blink()
 
