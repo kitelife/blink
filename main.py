@@ -201,7 +201,7 @@ class BeautyEye(object):
             for row in self.__db.query(for_select):
                 stat_data[table_name]['used_percent'].append(row[0])
                 stat_data[table_name]['created_at'].append(row[1])
-            for_delete = 'DELETE FROM %s WHERE created_at < "%s' % (table_name, now)
+            for_delete = 'DELETE FROM %s WHERE created_at < "%s"' % (table_name, now)
             self.__db.execute(for_delete)
 
         # cpu
