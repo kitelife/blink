@@ -176,7 +176,7 @@ class BeautyEye(object):
         data_to_render = {
             'host_info': self.__host_info(),
             'disk_info': self.__disk_info(),
-            'email_type': data.pop('email_type')
+            'email_type': data['email_type']
         }
 
         if data['email_type'] == 'advanced':
@@ -225,8 +225,8 @@ class BeautyEye(object):
             index_quotient = index / merge_count
             index_remainder = index % merge_count
             if index_remainder == 0:
-                new_data['created_at'][index_quotient] = data['created_at'][index]
-                new_data['used_percent'][index_quotient] = 0
+                new_data['created_at'].append(data['created_at'][index])
+                new_data['used_percent'].append(0)
             new_data['used_percent'][index_quotient] += data['used_percent'][index]
             if index_remainder == merge_count-1:
                 new_data['used_percent'][index_quotient] = round(
@@ -306,17 +306,17 @@ class BeautyEye(object):
                 series = pandas.Series(cpu_stat_data['used_percent'], index=cpu_stat_data['created_at'])
                 cpu_graph = vincent.Area(series)
                 cpu_graph.axis_titles(x=u'Time', y=u'Usage (%)')
-                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=150)))
+                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=-30)))
                 cpu_graph.axes[0].properties = ax
                 cpu_graph_json = cpu_graph.to_json()
 
                 for index in xrange(mem_data_count):
-                    mem_stat_data['created_at'][index] = datetime.strptime(cpu_stat_data['created_at'][index],
+                    mem_stat_data['created_at'][index] = datetime.strptime(mem_stat_data['created_at'][index],
                                                                            '%Y-%m-%d %H:%M:%S')
                 series = pandas.Series(mem_stat_data['used_percent'], index=mem_stat_data['created_at'])
                 mem_graph = vincent.Area(series)
                 mem_graph.axis_titles(x=u'Time', y=u'Usage (%)')
-                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=150)))
+                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=-30)))
                 mem_graph.axes[0].properties = ax
                 mem_graph_json = mem_graph.to_json()
 
