@@ -16,11 +16,15 @@ from email.header import Header
 from email.mime.image import MIMEImage
 from collections import OrderedDict
 
+from conf import config
+
 import psutil
-import vincent
 from jinja2 import Template
-from vincent import AxisProperties, PropertySet, ValueRef
-import pandas
+
+if config['email_type'] == 'advanced':
+    import vincent
+    from vincent import AxisProperties, PropertySet, ValueRef
+    import pandas
 
 
 class DB(object):
@@ -169,41 +173,71 @@ class BeautyEye(object):
             time.sleep(stat_interval)
 
     def __render_content(self, template_name, data):
-        cmd_pattern = 'vega/bin/vg2png {source_file} {target_file}'
+        data_to_render = {
+            'host_info': self.__host_info(),
+            'disk_info': self.__disk_info(),
+            'email_type': data.pop('email_type')
+        }
 
-        cpu_stat = data['cpu_stat']
-        cpu_stat_data = cpu_stat['data']
-        cpu_data_file_name = 'cpu_stat_data.json'
-        cpu_graph_file_name = cpu_stat['target_file_name']
-        with open(cpu_data_file_name, 'w') as fh:
-            fh.write(cpu_stat_data)
-        cmd = cmd_pattern.format(source_file=cpu_data_file_name, target_file=cpu_graph_file_name)
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as err:
-            print err
-            return False
+        if data['email_type'] == 'advanced':
+            cmd_pattern = 'vega/bin/vg2png {source_file} {target_file}'
 
-        mem_stat = data['mem_stat']
-        mem_stat_data = mem_stat['data']
-        mem_data_file_name = 'mem_stat_data.json'
-        mem_graph_file_name = mem_stat['target_file_name']
-        with open(mem_data_file_name, 'w') as fh:
-            fh.write(mem_stat_data)
-        cmd = cmd_pattern.format(source_file=mem_data_file_name, target_file=mem_graph_file_name)
-        try:
-            subprocess.check_call(cmd, shell=True)
-        except subprocess.CalledProcessError as err:
-            print err
-            return False
+            cpu_stat = data['cpu_stat']
+            cpu_stat_data = cpu_stat['data']
+            cpu_data_file_name = 'cpu_stat_data.json'
+            cpu_graph_file_name = cpu_stat['target_file_name']
+            with open(cpu_data_file_name, 'w') as fh:
+                fh.write(cpu_stat_data)
+            cmd = cmd_pattern.format(source_file=cpu_data_file_name, target_file=cpu_graph_file_name)
+            try:
+                subprocess.check_call(cmd, shell=True)
+            except subprocess.CalledProcessError as err:
+                print err
+                return False
 
-        host_info = self.__host_info()
-        disk_info = self.__disk_info()
+            mem_stat = data['mem_stat']
+            mem_stat_data = mem_stat['data']
+            mem_data_file_name = 'mem_stat_data.json'
+            mem_graph_file_name = mem_stat['target_file_name']
+            with open(mem_data_file_name, 'w') as fh:
+                fh.write(mem_stat_data)
+            cmd = cmd_pattern.format(source_file=mem_data_file_name, target_file=mem_graph_file_name)
+            try:
+                subprocess.check_call(cmd, shell=True)
+            except subprocess.CalledProcessError as err:
+                print err
+                return False
+        else:
+            data_to_render.update(data)
         with open(template_name) as fh:
             template = Template(fh.read().decode('utf-8'))
-        return template.render(host_info=host_info, disk_info=disk_info)
+        return template.render(**data_to_render)
 
-    def __email_it(self, subject, content, attach_files):
+    @staticmethod
+    def __data_preprocess(data):
+        new_data = {
+            'used_percent': [],
+            'created_at': []
+        }
+        merge_count = 5
+        length = len(data['created_at'])
+        for index in xrange(length):
+            index_quotient = index / merge_count
+            index_remainder = index % merge_count
+            if index_remainder == 0:
+                new_data['created_at'][index_quotient] = data['created_at'][index]
+            new_data['used_percent'][index_quotient] += data['used_percent'][index]
+            if index_remainder == merge_count-1:
+                new_data['used_percent'][index_quotient] = round(
+                    float(new_data['used_percent'][index_quotient]) / merge_count,
+                    2
+                )
+        return new_data
+
+    def __email_it(self, subject, content, attach_files=None):
+        if attach_files is None:
+            attach_files = []
+
         msg = MIMEMultipart()
         msg['Subject'] = Header(subject, 'utf-8')
         msg['From'] = Header(self.__config['email']['from'], 'utf-8')
@@ -230,6 +264,7 @@ class BeautyEye(object):
 
     def __email_summary(self):
         email_interval = self.__config['email']['interval']
+        email_subject = '服务器监控数据'
 
         while True:
             time.sleep(email_interval)
@@ -251,42 +286,79 @@ class BeautyEye(object):
                          % (table_name, now)
                 for row in self.__db.query(for_select):
                     stat_data[table_name]['used_percent'].append(row[0])
-                    stat_data[table_name]['created_at'].append(datetime.strptime(row[1], '%Y-%m-%d %H:%M:%S'))
+                    stat_data[table_name]['created_at'].append(row[1])
                 for_delete = 'DELETE FROM %s WHERE created_at < "%s"' % (table_name, now)
                 self.__db.execute(for_delete)
 
             # cpu
-            cpu_stat_data = stat_data['cpu_stat']
-            series = pandas.Series(cpu_stat_data['used_percent'], index=cpu_stat_data['created_at'])
-            cpu_graph = vincent.Area(series)
-            cpu_graph.axis_titles(x=u'Time', y=u'Usage(%)')
-            # cpu_graph.name(u'CPU使用率')
-            ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=30)))
-            cpu_graph.axes[0].properties = ax
-            cpu_graph_json = cpu_graph.to_json()
-
+            cpu_stat_data = self.__data_preprocess(stat_data['cpu_stat'])
             # memory
-            mem_stat_data = stat_data['mem_stat']
-            series = pandas.Series(mem_stat_data['used_percent'], index=mem_stat_data['created_at'])
-            mem_graph = vincent.Area(series)
-            mem_graph.axis_titles(x=u'Time', y=u'Usage(%)')
-            # mem_graph.name(u'内存使用率')
-            ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=30)))
-            mem_graph.axes[0].properties = ax
-            mem_graph_json = mem_graph.to_json()
+            mem_stat_data = self.__data_preprocess(stat_data['mem_stat'])
 
-            email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
-                                  'cpu_stat': {'data': cpu_graph_json, 'target_file_name': 'cpu_graph.png'},
-                                  'mem_stat': {'data': mem_graph_json, 'target_file_name': 'mem_graph.png'}
-            })
-            if email_content is None:
-                print u'模板渲染失败！'
-                break
-            email_subject = '服务器监控数据'
-            print self.__email_it(subject=email_subject, content=email_content,
-                                  attach_files=[
-                                      {'file_name': 'cpu_graph.png', 'file_id': 'cpu_stat'},
-                                      {'file_name': 'mem_graph.png', 'file_id': 'mem_stat'}])
+            cpu_data_count = len(cpu_stat_data['created_at'])
+            mem_data_count = len(mem_stat_data['created_at'])
+
+            if self.__config['email_type'] == 'advanced':
+                for index in xrange(cpu_data_count):
+                    cpu_stat_data['created_at'][index] = datetime.strptime(cpu_stat_data['created_at'][index],
+                                                                           '%Y-%m-%d %H:%M:%S')
+                series = pandas.Series(cpu_stat_data['used_percent'], index=cpu_stat_data['created_at'])
+                cpu_graph = vincent.Area(series)
+                cpu_graph.axis_titles(x=u'Time', y=u'Usage (%)')
+                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=150)))
+                cpu_graph.axes[0].properties = ax
+                cpu_graph_json = cpu_graph.to_json()
+
+                for index in xrange(mem_data_count):
+                    mem_stat_data['created_at'][index] = datetime.strptime(cpu_stat_data['created_at'][index],
+                                                                           '%Y-%m-%d %H:%M:%S')
+                series = pandas.Series(mem_stat_data['used_percent'], index=mem_stat_data['created_at'])
+                mem_graph = vincent.Area(series)
+                mem_graph.axis_titles(x=u'Time', y=u'Usage (%)')
+                ax = AxisProperties(labels=PropertySet(angle=ValueRef(value=150)))
+                mem_graph.axes[0].properties = ax
+                mem_graph_json = mem_graph.to_json()
+
+                email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
+                    'email_type': self.__config['email_type'],
+                    'cpu_stat': {'data': cpu_graph_json, 'target_file_name': 'cpu_graph.png'},
+                    'mem_stat': {'data': mem_graph_json, 'target_file_name': 'mem_graph.png'}
+                })
+                if email_content is None:
+                    print u'模板渲染失败！'
+                    break
+                print self.__email_it(subject=email_subject, content=email_content,
+                                      attach_files=[
+                                          {'file_name': 'cpu_graph.png', 'file_id': 'cpu_stat'},
+                                          {'file_name': 'mem_graph.png', 'file_id': 'mem_stat'}
+                                      ])
+            else:
+                # 娶最大的5个，最小的5个
+                max_n = 5
+
+                cpu_data_tuples = [(cpu_stat_data['created_at'][index], cpu_stat_data['used_percent'][index])
+                                   for index in xrange(cpu_data_count)]
+                cpu_data_sorted = sorted(cpu_data_tuples, key=lambda item: item[1])
+                cpu_sorted_max = []
+                if cpu_data_count >= max_n:
+                    cpu_sorted_max.extend(cpu_data_sorted[0-max_n:])
+
+                mem_data_tuples = [(mem_stat_data['created_at'][index], mem_stat_data['used_percent'][index])
+                                   for index in xrange(mem_data_count)]
+                mem_data_sorted = sorted(mem_data_tuples, key=lambda item: item[1])
+                mem_sorted_max = []
+                if mem_data_count >= max_n:
+                    mem_sorted_max.extend(mem_data_sorted[0-max_n:])
+                email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
+                    'email_type': self.__config['email_type'],
+                    'max_n': max_n,
+                    'cpu_stat': {'max_n': cpu_sorted_max},
+                    'mem_stat': {'max_n': mem_sorted_max}
+                })
+                if email_content is None:
+                    print u'模板渲染失败！'
+                    break
+                print self.__email_it(subject=email_subject, content=email_content)
 
     def blink(self):
         process_record = []
@@ -299,7 +371,6 @@ class BeautyEye(object):
 
 
 def main():
-    from conf import config
     be = BeautyEye(config)
     be.blink()
 
