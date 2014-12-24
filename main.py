@@ -226,6 +226,7 @@ class BeautyEye(object):
             index_remainder = index % merge_count
             if index_remainder == 0:
                 new_data['created_at'][index_quotient] = data['created_at'][index]
+                new_data['used_percent'][index_quotient] = 0
             new_data['used_percent'][index_quotient] += data['used_percent'][index]
             if index_remainder == merge_count-1:
                 new_data['used_percent'][index_quotient] = round(
