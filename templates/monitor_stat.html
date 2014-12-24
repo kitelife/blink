@@ -28,7 +28,7 @@
 <div class="cpu_stat">
     <span>CPU使用率最高的 {{max_n}} 项：</span>
     <ul>
-        {% for created_at, used_percent in cpu_stat.max_n %}
+        {% for created_at, used_percent in cpu_stat.max_n_data %}
             <li>{{ created_at }}：{{ used_percent }}%</li>
         {% endfor %}
     </ul>
@@ -36,7 +36,7 @@
 <div class="mem_stat">
     <span>内存使用率最高的 {{max_n}} 项：</span>
     <ul>
-        {% for created_at, used_percent in mem_stat.max_n %}
+        {% for created_at, used_percent in mem_stat.max_n_data %}
             <li>{{ created_at }}：{{ used_percent }}%</li>
         {% endfor %}
     </ul>

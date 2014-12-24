@@ -5,12 +5,15 @@ config = {
     'host_ip': '',
     'cpu': {
         'interval': 1,
+        'threshold': 90,
     },
     'mem': {
         'interval': 1,
+        'threshold': 90,
     },
     'disk': {
         'interval': 10,
+        'threshold': 90,
     },
     'email': {
         'interval': 300,

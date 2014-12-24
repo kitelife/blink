@@ -84,15 +84,14 @@ class CircularQueue(object):
 
 class BeautyEye(object):
 
-    def __init__(self, config):
-        self.__config = config
+    def __init__(self, conf):
+        self.__config = conf
         self.__db = DB()
 
     @staticmethod
     def __disk_info():
         disk_info = {}
         for dp in psutil.disk_partitions(all=False):
-            # print dp.mountpoint, psutil.disk_usage(dp.mountpoint).percent, '%'
             disk_info[dp.mountpoint] = psutil.disk_usage(dp.mountpoint).percent
         return disk_info
 
@@ -106,56 +105,60 @@ class BeautyEye(object):
         }
         return host_info
 
-    @staticmethod
-    def __over_threshold(count, value):
-        return count+1 if value >= 90 else count
+    def __over_threshold(self, key):
+        def detect_over(count, value):
+            return count+1 if value >= self.__config[key]['threshold'] else count
+        return detect_over
 
     def __cpu_stat(self):
-        abnormal_continue_times = 3
+        # 采集结果连续 abnormal_continue_times 超过阈值，则需要告警
+        abnormal_continue_times = 5
         cpu_stat_queue = CircularQueue(abnormal_continue_times)
         stat_interval = self.__config['cpu']['interval']
+        detect_cpu_over = self.__over_threshold('cpu')
+        cpu_usage_threshold = self.__config['cpu']['threshold']
         while True:
             cpu_usage_percent = psutil.cpu_percent(1)
-            # print '__cpu_stat', cpu_usage_percent, '%'
 
             sql = 'INSERT INTO cpu_stat (used_percent, created_at) VALUES (%d, "%s")' \
                   % (cpu_usage_percent, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             self.__db.execute(sql)
 
             cpu_stat_queue.add(cpu_usage_percent)
-            if functools.reduce(self.__over_threshold, cpu_stat_queue.data, 0) == abnormal_continue_times:
+            if functools.reduce(detect_cpu_over, cpu_stat_queue.data, 0) == abnormal_continue_times:
                 email_subject = u'服务器CPU使用率告警 - %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), )
                 email_content = u'CPU使用率已连续 {abnormal_times} 次超过 {usage_threshold}%'\
-                    .format(abnormal_times=abnormal_continue_times, usage_threshold=90)
+                    .format(abnormal_times=abnormal_continue_times, usage_threshold=cpu_usage_threshold)
                 self.__email_alert(subject=email_subject, content=email_content)
 
             time.sleep(stat_interval)
 
     def __mem_stat(self):
-        abnormal_continue_times = 3
+        abnormal_continue_times = 5
         mem_stat_queue = CircularQueue(abnormal_continue_times)
         stat_interval = self.__config['mem']['interval']
+        detect_mem_over = self.__over_threshold('mem')
+        mem_usage_threshold = self.__config['mem']['threshold']
         while True:
             mem_usage = psutil.virtual_memory()
             mem_usage_percent = mem_usage.percent
-            # print '__mem_stat', mem_usage_percent, '%'
 
             sql = 'INSERT INTO mem_stat (used_percent, created_at) VALUES (%d, "%s")' \
                   % (mem_usage_percent, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
             self.__db.execute(sql)
 
             mem_stat_queue.add(mem_usage_percent)
-            if functools.reduce(self.__over_threshold, mem_stat_queue.data, 0) == abnormal_continue_times:
+            if functools.reduce(detect_mem_over, mem_stat_queue.data, 0) == abnormal_continue_times:
                 email_subject = u'服务器内存使用率告警 - %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), )
                 email_content = u'内存使用率已连续 {abnormal_times} 次超过 {usage_threshold}%'\
-                    .format(abnormal_times=abnormal_continue_times, usage_threshold=90)
+                    .format(abnormal_times=abnormal_continue_times, usage_threshold=mem_usage_threshold)
                 self.__email_alert(subject=email_subject, content=email_content)
 
             time.sleep(stat_interval)
 
     def __disk_stat(self):
         stat_interval = self.__config['disk']['interval']
-        disk_threshold = 90
+        disk_threshold = self.__config['disk']['threshold']
         while True:
             abnormal_mountpoint = {}
             for mount_point, usage_percent in self.__disk_info().iteritems():
@@ -176,10 +179,10 @@ class BeautyEye(object):
         data_to_render = {
             'host_info': self.__host_info(),
             'disk_info': self.__disk_info(),
-            'email_type': data['email_type']
+            'email_type': self.__config['email_type']
         }
 
-        if data['email_type'] == 'advanced':
+        if data_to_render['email_type'] == 'advanced':
             cmd_pattern = 'vega/bin/vg2png {source_file} {target_file}'
 
             cpu_stat = data['cpu_stat']
@@ -193,7 +196,7 @@ class BeautyEye(object):
                 subprocess.check_call(cmd, shell=True)
             except subprocess.CalledProcessError as err:
                 print err
-                return False
+                return None
 
             mem_stat = data['mem_stat']
             mem_stat_data = mem_stat['data']
@@ -206,7 +209,7 @@ class BeautyEye(object):
                 subprocess.check_call(cmd, shell=True)
             except subprocess.CalledProcessError as err:
                 print err
-                return False
+                return None
         else:
             data_to_render.update(data)
         with open(template_name) as fh:
@@ -219,6 +222,7 @@ class BeautyEye(object):
             'used_percent': [],
             'created_at': []
         }
+        # 5个数据点合并成一个数据点
         merge_count = 5
         length = len(data['created_at'])
         for index in xrange(length):
@@ -271,7 +275,6 @@ class BeautyEye(object):
             time.sleep(email_interval)
 
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
             stat_data = {
                 'cpu_stat': {
                     'used_percent': [],
@@ -300,6 +303,7 @@ class BeautyEye(object):
             mem_data_count = len(mem_stat_data['created_at'])
 
             if self.__config['email_type'] == 'advanced':
+                # 生成绘图JSON数据的细节还得仔细研究研究
                 for index in xrange(cpu_data_count):
                     cpu_stat_data['created_at'][index] = datetime.strptime(cpu_stat_data['created_at'][index],
                                                                            '%Y-%m-%d %H:%M:%S')
@@ -321,7 +325,6 @@ class BeautyEye(object):
                 mem_graph_json = mem_graph.to_json()
 
                 email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
-                    'email_type': self.__config['email_type'],
                     'cpu_stat': {'data': cpu_graph_json, 'target_file_name': 'cpu_graph.png'},
                     'mem_stat': {'data': mem_graph_json, 'target_file_name': 'mem_graph.png'}
                 })
@@ -334,7 +337,7 @@ class BeautyEye(object):
                                           {'file_name': 'mem_graph.png', 'file_id': 'mem_stat'}
                                       ])
             else:
-                # 娶最大的5个，最小的5个
+                # 娶最大的5个
                 max_n = 5
 
                 cpu_data_tuples = [(cpu_stat_data['created_at'][index], cpu_stat_data['used_percent'][index])
@@ -351,10 +354,9 @@ class BeautyEye(object):
                 if mem_data_count >= max_n:
                     mem_sorted_max.extend(mem_data_sorted[0-max_n:])
                 email_content = self.__render_content(template_name='templates/monitor_stat.html', data={
-                    'email_type': self.__config['email_type'],
                     'max_n': max_n,
-                    'cpu_stat': {'max_n': cpu_sorted_max},
-                    'mem_stat': {'max_n': mem_sorted_max}
+                    'cpu_stat': {'max_n_data': cpu_sorted_max},
+                    'mem_stat': {'max_n_data': mem_sorted_max}
                 })
                 if email_content is None:
                     print u'模板渲染失败！'
