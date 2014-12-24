@@ -1,4 +1,4 @@
-psutil
+psutil==2.1.3
 vincent
-jinja
+jinja2
 pandas

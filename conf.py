@@ -2,6 +2,7 @@ __author__ = 'xiayf'
 
 config = {
     'email_type': 'basic',  # or advanced
+    'host_ip': '',
     'cpu': {
         'interval': 1,
     },
